@@ -43,6 +43,46 @@ const DEPTH_BUFFER = [];
 
 const IMAGE_BUFFER = ctx.createImageData(CANVAS.x, CANVAS.y);
 
+let skipped_triangles = 0;
+
+const LIGHTS = [];
+
+const AMBIENT_LIGHT_INTENSITY = 0.1;
+
+LIGHTS.push(
+    {
+        type: 'p',
+        x: -2,
+        y: 0,
+        z: 5,
+        i: 0.1
+    },
+
+    {
+        type: 'd',
+        x: 1,
+        y: 1,
+        z: 1,
+        i: 0.1
+    },
+
+    {
+        type: 'p',
+        x: 0,
+        y: 2,
+        z: 5,
+        i: 0.1
+    }
+)
+
+const sumI = (sum, light) => sum + light.i;
+
+const MAX_INTENSITY = AMBIENT_LIGHT_INTENSITY + LIGHTS.reduce(sumI, 0)
+
+const AMBIENT_RGB = Math.round(255 * AMBIENT_LIGHT_INTENSITY / MAX_INTENSITY);
+
+CANVAS_EL.style.backgroundColor = `rgb(${AMBIENT_RGB}, ${AMBIENT_RGB}, ${AMBIENT_RGB})`
+
 for (let x = 0; x < CANVAS.x; x++) {
 
     for (let y = 0; y < CANVAS.y; y++) {
@@ -101,6 +141,47 @@ function interpolate(x0, y0, x1, y1) {
     }
 
     return values;
+}
+
+function getLightLevel(p, n) {
+    let V = Vector.subtract2(CAMERA, p);
+
+    let i = AMBIENT_LIGHT_INTENSITY;
+
+    Vector.unit(V);
+
+    for (let light of LIGHTS) {
+        let L;
+        let d2 = null;
+        if (light.type == 'p') {
+            L = Vector.subtract2(light, p);
+            d2 = Vector.magSquared(L);
+            Vector.unit(L);
+        }
+        else if (light.type == 'd') {
+            L = Vector.unit2(light);
+            Vector.mult(L, -1);
+        }
+
+        let dot = Vector.dot(n, L);
+
+        if (dot > 0) i += light.i * dot;
+
+        if (d2) i += light.i * dot / (1 + 0.1 * d2)
+
+        let H = Vector.add2(L, V);
+
+        Vector.unit(H);
+
+        let spec = Math.pow(
+            Math.max(0, Vector.dot(n, H)),
+            16
+        );
+
+        i += light.i * spec * 0.5;
+    }
+
+    return i;
 }
 
 // Drawing
@@ -209,13 +290,13 @@ function drawShadedTriangle(p0, p1, p2, colour = GREEN) {
 
     // therefore, 1 'tall' side from p0 to p2, 2 'short' sides
     let x_0_1 = interpolate(p0.y, p0.x, p1.y, p1.x);
-    let i_0_1 = interpolate(p0.y, p0.z, p1.y, p1.z);
+    let z_0_1 = interpolate(p0.y, p0.z, p1.y, p1.z);
 
     let x_1_2 = interpolate(p1.y, p1.x, p2.y, p2.x);
-    let i_1_2 = interpolate(p1.y, p1.z, p2.y, p2.z);
+    let z_1_2 = interpolate(p1.y, p1.z, p2.y, p2.z);
 
     let x_0_2 = interpolate(p0.y, p0.x, p2.y, p2.x);
-    let i_0_2 = interpolate(p0.y, p0.z, p2.y, p2.z);
+    let z_0_2 = interpolate(p0.y, p0.z, p2.y, p2.z);
 
     // same as in drawFilledTriangle - repeated value in both x and i for the short sides
 
@@ -223,39 +304,39 @@ function drawShadedTriangle(p0, p1, p2, colour = GREEN) {
 
     let x_0_1_2 = x_0_1.concat(x_1_2);
 
-    i_0_1.pop()
+    z_0_1.pop()
 
-    let i_0_1_2 = i_0_1.concat(i_1_2);
+    let z_0_1_2 = z_0_1.concat(z_1_2);
 
     let {r, g, b} = colour;
 
     for (let y = p0.y; y <= p2.y; y++) {
         let index = y - p0.y;
 
-        let x_l, x_r, i_l, i_r;
+        let x_l, x_r, z_l, z_r;
 
         let min = Math.min(x_0_2[index], x_0_1_2[index])
 
         if (min == x_0_2[index]) {
             x_l = x_0_2[index];
             x_r = x_0_1_2[index];
-            i_l = i_0_2[index];
-            i_r = i_0_1_2[index];
+            z_l = z_0_2[index];
+            z_r = z_0_1_2[index];
         }
         else {
             x_l = x_0_1_2[index];
             x_r = x_0_2[index];
-            i_l = i_0_1_2[index];
-            i_r = i_0_2[index];
+            z_l = z_0_1_2[index];
+            z_r = z_0_2[index];
         }
 
-        let i_values = interpolate(x_l, i_l, x_r, i_r);
+        let z_values = interpolate(x_l, z_l, x_r, z_r);
 
         for (let x = x_l; x <= x_r; x++) {
             let x_index = x - x_l;
-            let i = i_values[x_index];
+            let z = z_values[x_index];
 
-            ctx.fillStyle = `rgb(${r * i}, ${g * i}, ${b * i})`;
+            ctx.fillStyle = `rgb(${r * z}, ${g * z}, ${b * z})`;
 
             ctx.fillRect(Math.round(x + CENTRE.x), Math.round(y + CENTRE.y), PIXEL_SIZE, PIXEL_SIZE);
         }
@@ -271,13 +352,13 @@ function drawFilledDepthTriangle(p0, p1, p2, colour = GREEN) {
 
     // therefore, 1 'tall' side from p0 to p2, 2 'short' sides
     let x_0_1 = interpolate(p0.y, p0.x, p1.y, p1.x);
-    let i_0_1 = interpolate(p0.y, p0.z, p1.y, p1.z);
+    let z_0_1 = interpolate(p0.y, p0.z, p1.y, p1.z);
 
     let x_1_2 = interpolate(p1.y, p1.x, p2.y, p2.x);
-    let i_1_2 = interpolate(p1.y, p1.z, p2.y, p2.z);
+    let z_1_2 = interpolate(p1.y, p1.z, p2.y, p2.z);
 
     let x_0_2 = interpolate(p0.y, p0.x, p2.y, p2.x);
-    let i_0_2 = interpolate(p0.y, p0.z, p2.y, p2.z);
+    let z_0_2 = interpolate(p0.y, p0.z, p2.y, p2.z);
 
     // same as in drawFilledTriangle - repeated value in both x and i for the short sides
 
@@ -285,9 +366,9 @@ function drawFilledDepthTriangle(p0, p1, p2, colour = GREEN) {
 
     let x_0_1_2 = x_0_1.concat(x_1_2);
 
-    i_0_1.pop()
+    z_0_1.pop()
 
-    let i_0_1_2 = i_0_1.concat(i_1_2);
+    let z_0_1_2 = z_0_1.concat(z_1_2);
 
     let {r, g, b} = colour;
     
@@ -301,31 +382,31 @@ function drawFilledDepthTriangle(p0, p1, p2, colour = GREEN) {
         if (cy >= CANVAS.y) break;
         if (cy < 0) continue;
 
-        let x_l, x_r, i_l, i_r;
+        let x_l, x_r, z_l, z_r;
 
         let min = Math.min(x_0_2[index], x_0_1_2[index])
 
         if (min == x_0_2[index]) {
             x_l = x_0_2[index];
             x_r = x_0_1_2[index];
-            i_l = i_0_2[index];
-            i_r = i_0_1_2[index];
+            z_l = z_0_2[index];
+            z_r = z_0_1_2[index];
         }
         else {
             x_l = x_0_1_2[index];
             x_r = x_0_2[index];
-            i_l = i_0_1_2[index];
-            i_r = i_0_2[index];
+            z_l = z_0_1_2[index];
+            z_r = z_0_2[index];
         }
 
         x_l = Math.round(x_l)
         x_r = Math.round(x_r)
 
-        let i_values = interpolate(x_l, i_l, x_r, i_r);
+        let z_values = interpolate(x_l, z_l, x_r, z_r);
 
         for (let x = x_l; x <= x_r; x++) {
             let x_index = x - x_l;
-            let i = i_values[x_index];
+            let z = z_values[x_index];
 
             let cx = Math.round(x + CENTRE.x);
 
@@ -334,9 +415,9 @@ function drawFilledDepthTriangle(p0, p1, p2, colour = GREEN) {
             
             let index = getIndex(cx, cy);
 
-            if (i <= DEPTH_BUFFER[index]) continue;
+            if (z <= DEPTH_BUFFER[index]) continue;
 
-            DEPTH_BUFFER[index] = i;
+            DEPTH_BUFFER[index] = z;
 
             index *= 4;
 
@@ -349,41 +430,158 @@ function drawFilledDepthTriangle(p0, p1, p2, colour = GREEN) {
     }
 }
 
+function drawShadedDepthTriangle(p0, p1, p2, colour = GREEN) {
+    // Ensure p0.y <= p1.y <= p2.y
+    // p.z = colour intensity at that point
+    if (p1.y < p0.y) [p0, p1] = [p1, p0];
+    if (p2.y < p0.y) [p0, p2] = [p2, p0];
+    if (p2.y < p1.y) [p1, p2] = [p2, p1];
+
+    // therefore, 1 'tall' side from p0 to p2, 2 'short' sides
+    let x_0_1 = interpolate(p0.y, p0.x, p1.y, p1.x);
+    let z_0_1 = interpolate(p0.y, p0.z, p1.y, p1.z);
+    let i_0_1 = interpolate(p0.y, p0.i, p1.y, p1.i);
+
+    let x_1_2 = interpolate(p1.y, p1.x, p2.y, p2.x);
+    let z_1_2 = interpolate(p1.y, p1.z, p2.y, p2.z);
+    let i_1_2 = interpolate(p1.y, p1.i, p2.y, p2.i);
+
+    let x_0_2 = interpolate(p0.y, p0.x, p2.y, p2.x);
+    let z_0_2 = interpolate(p0.y, p0.z, p2.y, p2.z);
+    let i_0_2 = interpolate(p0.y, p0.i, p2.y, p2.i);
+
+    // same as in drawFilledTriangle - repeated value in both x and i for the short sides
+
+    x_0_1.pop()
+
+    let x_0_1_2 = x_0_1.concat(x_1_2);
+
+    z_0_1.pop()
+
+    let z_0_1_2 = z_0_1.concat(z_1_2);
+
+    i_0_1.pop()
+
+    let i_0_1_2 = i_0_1.concat(i_1_2);
+
+    let {r, g, b} = colour;
+
+    for (let y = p0.y; y <= p2.y; y++) {
+        let index = y - p0.y;
+        
+        let cy = Math.round(CANVAS.y - y - CENTRE.y);
+
+        if (cy >= CANVAS.y) continue;
+        if (cy < 0) break;
+
+        let x_l, x_r, z_l, z_r, i_l, i_r;
+
+        let min = Math.min(x_0_2[index], x_0_1_2[index])
+
+        if (min == x_0_2[index]) {
+            x_l = x_0_2[index];
+            x_r = x_0_1_2[index];
+            z_l = z_0_2[index];
+            z_r = z_0_1_2[index];
+            i_l = i_0_2[index];
+            i_r = i_0_1_2[index];
+        }
+        else {
+            x_l = x_0_1_2[index];
+            x_r = x_0_2[index];
+            z_l = z_0_1_2[index];
+            z_r = z_0_2[index];
+            i_l = i_0_1_2[index];
+            i_r = i_0_2[index];
+        }
+
+        x_l = Math.round(x_l)
+        x_r = Math.round(x_r)
+
+        let z_values = interpolate(x_l, z_l, x_r, z_r);
+        let i_values = interpolate(x_l, i_l, x_r, i_r);
+
+        for (let x = x_l; x <= x_r; x++) {
+            let cx = Math.round(x + CENTRE.x);
+
+            if (cx >= CANVAS.x) break;
+            if (cx < 0) continue;
+            
+            let index = getIndex(cx, cy);
+            
+            let x_index = x - x_l;
+            let z = z_values[x_index];
+            let i = i_values[x_index] / MAX_INTENSITY;
+
+            if (z <= DEPTH_BUFFER[index]) continue;
+
+            DEPTH_BUFFER[index] = z;
+
+            index *= 4;
+
+            IMAGE_BUFFER.data[index] = r * i;
+            IMAGE_BUFFER.data[index + 1] = g * i;
+            IMAGE_BUFFER.data[index + 2] = b * i;
+            IMAGE_BUFFER.data[index + 3] = 255;
+            //ctx.fillRect(cx, cy, PIXEL_SIZE, PIXEL_SIZE);
+        }
+    }
+}
+
 function drawDot(dot) {
     ctx.fillStyle = 'red';
-    ctx.fillText(dot.name, dot.x + CENTRE.x, dot.y + CENTRE.y);
+    ctx.fillText(dot.name || 'P', dot.x + CENTRE.x, dot.y + CENTRE.y);
 }
 
 function render3D(vertices, triangles, translateVector = null, scaleVector = null) {
+    let worldVertices = [];
     let projected = [];
 
     for (let v of vertices) {
         let realV = v;
         if (scaleVector) {
-            realV = Vector.mult2(v, scaleVector);
+            realV = Vector.multElements2(v, scaleVector);
         }
 
         if (translateVector) {
             realV = Vector.add2(realV, translateVector)
         }
 
+        worldVertices.push(realV)
         projected.push(projectVertex(realV))
     }
 
     for (let t of triangles) {
         let [index0, index1, index2, colour] = t;
 
-        let p0 = vertices[index0]
-        let p1 = vertices[index1]
-        let p2 = vertices[index2]
+        let p0 = worldVertices[index0]
+        let p1 = worldVertices[index1]
+        let p2 = worldVertices[index2]
 
         let v1 = Vector.subtract2(p1, p0);
         let v2 = Vector.subtract2(p2, p0);
         let normal = Vector.cross(v1, v2);
 
-        if (Vector.dot(normal, CAMERA_DIRECTION) > 0) continue; // normal should point towards the camera - in opposite direction to CAMERA_DIRECTION
+        Vector.unit(normal);
 
-        drawFilledDepthTriangle(projected[index0], projected[index1], projected[index2], colour);
+        let proj0 = projected[index0];
+        let proj1 = projected[index1];
+        let proj2 = projected[index2];
+
+        let area = 
+        (proj1.x - proj0.x) * (proj2.y - proj0.y) -
+        (proj2.x - proj0.x) * (proj1.y - proj0.y);
+
+        if (area >= 0) {
+            skipped_triangles++;
+            continue;
+        }
+
+        proj0.i = getLightLevel(p0, normal);
+        proj1.i = getLightLevel(p1, normal);
+        proj2.i = getLightLevel(p2, normal);
+
+        drawShadedDepthTriangle(proj0, proj1, proj2, colour || CYAN);
     }
 }
 
@@ -402,16 +600,16 @@ const cube = {
     triangles: [
         [0, 1, 2, RED],
         [0, 2, 3, RED],
-        [4, 0, 3, GREEN],
-        [4, 3, 7, GREEN],
-        [5, 4, 7, BLUE],
-        [5, 7, 6, BLUE],
-        [1, 5, 6, YELLOW],
-        [1, 6, 2, YELLOW],
-        [4, 5, 1, PURPLE],
-        [4, 1, 0, PURPLE],
-        [2, 6, 7, CYAN],
-        [2, 7, 3, CYAN]
+        [4, 0, 3, RED],
+        [4, 3, 7, RED],
+        [5, 4, 7, RED],
+        [5, 7, 6, RED],
+        [1, 5, 6, RED],
+        [1, 6, 2, RED],
+        [4, 5, 1, RED],
+        [4, 1, 0, RED],
+        [2, 6, 7, RED],
+        [2, 7, 3, RED]
     ],
 
     r: 1
@@ -427,18 +625,188 @@ const pyramid = {
     ],
 
     triangles: [
-        [0, 1, 4, RED],
-        [1, 2, 4, GREEN],
+        [0, 1, 4, BLUE],
+        [1, 2, 4, BLUE],
         [2, 3, 4, BLUE],
-        [0, 3, 4, YELLOW],
-        [0, 1, 2, PURPLE],
-        [0, 2, 3, CYAN]
+        [0, 4, 3, BLUE],
+        [0, 2, 1, BLUE],
+        [0, 3, 2, BLUE]
     ],
 
     r: 1 // bounding sphere radius
 }
 
-const models = {cube, pyramid}
+const t = (1 + Math.sqrt(5)) / 2;
+
+const isosphere = {
+    vertices: [
+        {x:-0.525731,y:0.850651,z:0.000000},
+        {x:0.525731,y:0.850651,z:0.000000},
+        {x:-0.525731,y:-0.850651,z:0.000000},
+        {x:0.525731,y:-0.850651,z:0.000000},
+
+        {x:0.000000,y:-0.525731,z:0.850651},
+        {x:0.000000,y:0.525731,z:0.850651},
+        {x:0.000000,y:-0.525731,z:-0.850651},
+        {x:0.000000,y:0.525731,z:-0.850651},
+
+        {x:0.850651,y:0.000000,z:-0.525731},
+        {x:0.850651,y:0.000000,z:0.525731},
+        {x:-0.850651,y:0.000000,z:-0.525731},
+        {x:-0.850651,y:0.000000,z:0.525731},
+
+        {x:-0.809017,y:0.500000,z:0.309017},
+        {x:-0.500000,y:0.309017,z:0.809017},
+        {x:-0.309017,y:0.809017,z:0.500000},
+        {x:0.309017,y:0.809017,z:0.500000},
+        {x:0.000000,y:1.000000,z:0.000000},
+        {x:0.309017,y:0.809017,z:-0.500000},
+        {x:-0.309017,y:0.809017,z:-0.500000},
+        {x:-0.500000,y:0.309017,z:-0.809017},
+        {x:0.500000,y:0.309017,z:-0.809017},
+        {x:0.809017,y:0.500000,z:-0.309017},
+        {x:0.809017,y:-0.500000,z:-0.309017},
+        {x:1.000000,y:0.000000,z:0.000000},
+        {x:0.809017,y:-0.500000,z:0.309017},
+        {x:0.500000,y:-0.309017,z:0.809017},
+        {x:0.309017,y:-0.809017,z:0.500000},
+        {x:-0.309017,y:-0.809017,z:0.500000},
+        {x:-0.809017,y:-0.500000,z:0.309017},
+        {x:-1.000000,y:0.000000,z:0.000000},
+        {x:-0.809017,y:-0.500000,z:-0.309017},
+        {x:-0.309017,y:-0.809017,z:-0.500000},
+        {x:0.309017,y:-0.809017,z:-0.500000},
+        {x:0.500000,y:-0.309017,z:-0.809017},
+        {x:0.000000,y:-1.000000,z:0.000000},
+        {x:-0.500000,y:-0.309017,z:-0.809017},
+        {x:0.000000,y:0.000000,z:-1.000000},
+        {x:0.000000,y:0.000000,z:1.000000},
+        {x:0.500000,y:0.309017,z:0.809017},
+        {x:-0.500000,y:0.309017,z:0.809017},
+        {x:0.500000,y:0.309017,z:-0.809017},
+        {x:-0.500000,y:0.309017,z:-0.809017}
+    ],
+
+    triangles: [
+        [0,12,14],[11,13,12],[5,14,13],[12,13,14],
+
+        [0,14,16],[5,15,14],[1,16,15],[14,15,16],
+
+        [0,16,18],[1,17,16],[7,18,17],[16,17,18],
+
+        [0,18,19],[7,20,18],[10,19,20],[18,20,19],
+
+        [0,19,12],[10,41,19],[11,12,41],[19,41,12],
+
+        [1,15,17],[5,38,15],[9,17,38],[15,38,17],
+
+        [5,13,39],[11,39,13],[4,25,39],[13,39,25],
+
+        [11,41,28],[10,30,41],[2,28,30],[41,30,28],
+
+        [10,20,35],[7,36,20],[6,35,36],[20,36,35],
+
+        [7,17,40],[1,21,17],[8,40,21],[17,21,40],
+
+        [3,24,26],[9,25,24],[4,26,25],[24,25,26],
+
+        [3,26,34],[4,27,26],[2,34,27],[26,27,34],
+
+        [3,34,32],[2,31,34],[6,32,31],[34,31,32],
+
+        [3,32,22],[6,33,32],[8,22,33],[32,33,22],
+
+        [3,22,24],[8,23,22],[9,24,23],[22,23,24],
+
+        [4,38,25],[9,38,23],[5,39,38],[38,39,25],
+
+        [2,27,28],[4,28,25],[11,28,39],[28,39,25],
+
+        [6,31,35],[2,30,31],[10,35,30],[31,30,35],
+
+        [8,33,40],[6,36,33],[7,40,36],[33,36,40],
+
+        [9,23,21],[8,21,40],[1,38,21],[21,38,40]
+    ],
+
+    r: 1
+};
+
+const icosphere = {
+    vertices: [
+        // 12 Original Icosahedron Vertices
+        Vector.new(-0.525731, 0.850651, 0.0),   // 0
+        Vector.new(0.525731, 0.850651, 0.0),    // 1
+        Vector.new(-0.525731, -0.850651, 0.0),  // 2
+        Vector.new(0.525731, -0.850651, 0.0),   // 3
+        Vector.new(0.0, -0.525731, 0.850651),   // 4
+        Vector.new(0.0, 0.525731, 0.850651),    // 5
+        Vector.new(0.0, -0.525731, -0.850651),  // 6
+        Vector.new(0.0, 0.525731, -0.850651),   // 7
+        Vector.new(0.850651, 0.0, -0.525731),   // 8
+        Vector.new(0.850651, 0.0, 0.525731),    // 9
+        Vector.new(-0.850651, 0.0, -0.525731),  // 10
+        Vector.new(-0.850651, 0.0, 0.525731),   // 11
+
+        // 30 Unique Normalized Midpoints
+        Vector.new(-0.809017, 0.5, 0.309017),   // 12
+        Vector.new(-0.5, 0.309017, 0.809017),   // 13
+        Vector.new(-0.309017, 0.809017, 0.5),   // 14
+        Vector.new(0.309017, 0.809017, 0.5),    // 15
+        Vector.new(0.0, 1.0, 0.0),              // 16
+        Vector.new(0.309017, 0.809017, -0.5),   // 17
+        Vector.new(-0.309017, 0.809017, -0.5),  // 18
+        Vector.new(-0.5, 0.309017, -0.809017),  // 19
+        Vector.new(-0.809017, 0.5, -0.309017),  // 20
+        Vector.new(-1.0, 0.0, 0.0),             // 21
+        Vector.new(0.5, 0.309017, 0.809017),    // 22
+        Vector.new(0.809017, 0.5, 0.309017),    // 23
+        Vector.new(-0.5, -0.309017, 0.809017),  // 24
+        Vector.new(0.0, 0.0, 1.0),              // 25
+        Vector.new(-0.809017, -0.5, -0.309017), // 26
+        Vector.new(-0.809017, -0.5, 0.309017),  // 27
+        Vector.new(0.0, 0.0, -1.0),             // 28
+        Vector.new(-0.5, -0.309017, -0.809017), // 29
+        Vector.new(0.809017, 0.5, -0.309017),   // 30
+        Vector.new(0.5, 0.309017, -0.809017),   // 31
+        Vector.new(0.809017, -0.5, 0.309017),   // 32
+        Vector.new(0.5, -0.309017, 0.809017),   // 33
+        Vector.new(0.309017, -0.809017, 0.5),   // 34
+        Vector.new(-0.309017, -0.809017, 0.5),  // 35
+        Vector.new(0.0, -1.0, 0.0),             // 36
+        Vector.new(-0.309017, -0.809017, -0.5), // 37
+        Vector.new(0.309017, -0.809017, -0.5),  // 38
+        Vector.new(0.5, -0.309017, -0.809017),  // 39
+        Vector.new(0.809017, -0.5, -0.309017),  // 40
+        Vector.new(1.0, 0.0, 0.0)               // 41
+    ],
+
+    triangles: [
+        [0, 12, 14], [11, 13, 12], [5, 14, 13], [12, 13, 14],
+        [0, 14, 16], [5, 15, 14], [1, 16, 15], [14, 15, 16],
+        [0, 16, 18], [1, 17, 16], [7, 18, 17], [16, 17, 18],
+        [0, 18, 20], [7, 19, 18], [10, 20, 19], [18, 19, 20],
+        [0, 20, 12], [10, 21, 20], [11, 12, 21], [20, 21, 12],
+        [1, 15, 23], [5, 22, 15], [9, 23, 22], [15, 22, 23],
+        [5, 13, 25], [11, 24, 13], [4, 25, 24], [13, 24, 25],
+        [11, 21, 27], [10, 26, 21], [2, 27, 26], [21, 26, 27],
+        [10, 19, 29], [7, 28, 19], [6, 29, 28], [19, 28, 29],
+        [7, 17, 31], [1, 30, 17], [8, 31, 30], [17, 30, 31],
+        [3, 32, 34], [9, 33, 32], [4, 34, 33], [32, 33, 34],
+        [3, 34, 36], [4, 35, 34], [2, 36, 35], [34, 35, 36],
+        [3, 36, 38], [2, 37, 36], [6, 38, 37], [36, 37, 38],
+        [3, 38, 40], [6, 39, 38], [8, 40, 39], [38, 39, 40],
+        [3, 40, 32], [8, 41, 40], [9, 32, 41], [40, 41, 32],
+        [4, 33, 25], [9, 22, 33], [5, 25, 22], [33, 22, 25],
+        [2, 35, 27], [4, 24, 35], [11, 27, 24], [35, 24, 27],
+        [6, 37, 29], [2, 26, 37], [10, 29, 26], [37, 26, 29],
+        [8, 39, 31], [6, 28, 39], [7, 31, 28], [39, 28, 31],
+        [9, 41, 23], [8, 30, 41], [1, 23, 30], [41, 30, 23]
+    ],
+    r: 1
+}
+
+const models = {cube, pyramid, isosphere, icosphere}
 
 function createObject(type, position = null, rotation = null, scale = null) {
     let template = models[type];
@@ -455,7 +823,9 @@ function createObject(type, position = null, rotation = null, scale = null) {
         if (scale) {
             Vector.multElements(realV, scale);
 
-            newObj.r *= Math.max(scale.x, scale.y, scale.z);
+            let s = Math.max(scale.x, scale.y, scale.z);
+
+            newObj.r *= s;
         }
 
         if (position) {
@@ -533,12 +903,20 @@ function animate(timestamp) {
 
     ctx.clearRect(0, 0, CANVAS.x, CANVAS.y);
 
-    let move = Vector.new(Math.sin(timestamp * 0.001) * 0.03, 0, 0);
+    skipped_triangles = 0;
 
-    let cube1 = createObject('cube', Vector.new(0, -0.5, 4.5), Vector.new(timestamp * 0.001, timestamp * 0.0015, 0));
-    let cube2 = createObject('cube', Vector.new(2, 0, 5));
+    let scale = 0.5;
+    let scaleV = Vector.new(scale, scale, scale)
 
-    let instances = [cube1, cube2];
+    let instances = [
+        createObject('cube', Vector.new(0, -2, 5.1), null, Vector.new(10, 1, 10)),
+        createObject('icosphere', Vector.new(0.1, -1, 3), Vector.new(0, timestamp * 0.001, 0), scaleV),
+        createObject('icosphere', Vector.new(2, 0, 4), Vector.new(timestamp * 0.001, timestamp * 0.001, timestamp * 0.002), scaleV),
+        createObject('icosphere', Vector.new(Math.sin(timestamp * 0.001), 0, Math.cos(timestamp * 0.001) + 4), Vector.new(0, timestamp * 0.002, 0), scaleV),
+
+    ]
+
+    instances[0].r = 10;
 
     let clipped_instances = clipInstances(instances);
 
@@ -553,6 +931,7 @@ function animate(timestamp) {
     ctx.translate(0, -CANVAS.y)
     ctx.fillStyle = 'black';
     ctx.fillText(instances.length - clipped_instances.length + ' objects skipped', 100, CANVAS.y - 100)
+    ctx.fillText(skipped_triangles + ' triangles skipped', 100, CANVAS.y - 50)
     ctx.restore()
 
     // clear buffer for next frame

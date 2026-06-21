@@ -153,6 +153,20 @@ class VectorLib {
 
         return this.new(newX, newY, newZ);
     }
+
+    average(...vs) {
+        let x, y, z;
+
+        let div = 1 / vs.length;
+
+        for (let v of vs) {
+            x += v.x * div;
+            y += v.y * div;
+            z += v.z * div;
+        }
+
+        return {x,y,z};
+    }
 }
 
 export const Vector = new VectorLib()
